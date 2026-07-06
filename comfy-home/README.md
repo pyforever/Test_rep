@@ -47,11 +47,25 @@ Browser (PWA)  ── ws://IP:porta ──►  ESP8266 / ESP32 (server WebSocket
 
 L'app è statica: basta servire la cartella `comfy-home/` con un qualunque server HTTP.
 
+**Windows (PowerShell)** — due comandi separati (`&&` non è supportato in PowerShell 5.1):
+
+```powershell
+cd comfy-home
+python -m http.server 8080
+# se "python" non è riconosciuto: py -m http.server 8080
+```
+
+**Linux / macOS:**
+
 ```bash
 cd comfy-home
 python3 -m http.server 8080
 # oppure: npx serve, nginx, ecc.
 ```
+
+Per raggiungere l'app dallo smartphone sulla stessa rete WiFi usare
+`http://<IP-del-PC>:8080` (l'IP si trova con `ipconfig`; al primo avvio
+Windows potrebbe chiedere di consentire Python nel firewall).
 
 - **Windows 11**: aprire `http://localhost:8080` (o l'IP del PC che la serve) in
   Edge/Chrome → menu **App → Installa Comfy home**.
