@@ -45,27 +45,48 @@ Browser (PWA)  ── ws://IP:porta ──►  ESP8266 / ESP32 (server WebSocket
 
 ## Avvio
 
-L'app è statica: basta servire la cartella `comfy-home/` con un qualunque server HTTP.
+Il server consigliato è `server.py` (Python puro, nessuna dipendenza): serve
+l'app **e** tiene **dispositivi, comandi e log in comune** tra tutti i client
+(PC e smartphone). Va lanciato dalla **radice del repository** (la cartella
+che contiene `server.py` e `comfy-home/`):
 
-**Windows (PowerShell)** — due comandi separati (`&&` non è supportato in PowerShell 5.1):
+**Windows (PowerShell)** — comandi separati (`&&` non è supportato in PowerShell 5.1):
 
 ```powershell
-cd comfy-home
-python -m http.server 8080
-# se "python" non è riconosciuto: py -m http.server 8080
+cd test_rep
+python server.py
+# se "python" non è riconosciuto: py server.py
+# porta diversa: python server.py 9090
 ```
 
 **Linux / macOS:**
 
 ```bash
-cd comfy-home
-python3 -m http.server 8080
-# oppure: npx serve, nginx, ecc.
+cd test_rep
+python3 server.py
 ```
 
 Per raggiungere l'app dallo smartphone sulla stessa rete WiFi usare
 `http://<IP-del-PC>:8080` (l'IP si trova con `ipconfig`; al primo avvio
 Windows potrebbe chiedere di consentire Python nel firewall).
+
+### Dati condivisi tra PC e smartphone
+
+- Tutto lo stato (dispositivi con le loro chiavi, comandi con le icone, log)
+  vive in `comfy-home-data.json` accanto a `server.py` e viene sincronizzato
+  su ogni client entro pochi secondi (polling leggero, aggiornamento immediato
+  al ritorno in primo piano).
+- Nel piè di pagina l'app mostra **"● dati condivisi"** quando è collegata al
+  server e **"○ solo locale"** quando non lo raggiunge: in tal caso continua a
+  funzionare con la copia locale e ri-sincronizza da sola appena possibile
+  (le modifiche fatte offline sono conservate in una coda persistente).
+- Al primo avvio con il nuovo server, la configurazione già presente su un
+  client viene caricata automaticamente sul server (migrazione).
+- In caso di modifiche simultanee dallo stesso tipo di lista su due client,
+  vince l'ultima scrittura.
+- È ancora possibile servire la sola cartella `comfy-home/` con un server
+  statico qualunque (`python -m http.server`): l'app funziona, ma ogni
+  dispositivo tiene i propri dati (nessuna condivisione).
 
 - **Windows 11**: aprire `http://localhost:8080` (o l'IP del PC che la serve) in
   Edge/Chrome → menu **App → Installa Comfy home**.
@@ -96,8 +117,11 @@ Esporre le porte degli ESP direttamente su Internet è sconsigliato.
   Nomi e coppie indirizzo:porta duplicati vengono rifiutati (renderebbero ambigue
   le conferme).
 - **Limiti noti** (da valutare rispetto al proprio modello di minaccia):
-  - le chiavi sono salvate in `localStorage` del profilo browser: chi ha accesso
-    fisico e sbloccato al dispositivo può leggerle;
+  - le chiavi sono salvate in `localStorage` del profilo browser e, con il
+    server di sincronizzazione, anche in `comfy-home-data.json` sul PC;
+    l'API di sincronizzazione non ha autenticazione ed è pensata per una
+    **rete domestica fidata**: chi è connesso alla LAN può leggere la
+    configurazione. Non esporre la porta del server su Internet;
   - GCM non previene il **replay** di un messaggio catturato, e una conferma arrivata
     in ritardo (dopo il timeout) potrebbe combaciare con un re-invio successivo dello
     stesso comando: se rilevante per il proprio modello di minaccia, includere un

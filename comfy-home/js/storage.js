@@ -12,6 +12,7 @@
 
 import { bytesToHex, randomBytes } from './crypto.js';
 import { emit } from './ui.js';
+import { queuePush, queueLogAppend, queueLogClear } from './sync.js';
 
 const K_DEVICES = 'ch_devices_v1';
 const K_COMMANDS = 'ch_commands_v1';
@@ -201,10 +202,41 @@ function readList(key, sanitize) {
   return [...list]; // copia: la cache non è mutabile dall'esterno
 }
 
-function writeList(key, list) {
+function writeList(key, list, { push = true } = {}) {
   if (!writeJson(key, list)) return false;
   listCache.set(key, list);
+  // propaga al server condiviso (coda offline se non raggiungibile)
+  if (push) queuePush(key === K_DEVICES ? 'devices' : 'commands');
   return true;
+}
+
+/**
+ * Applica lo stato ricevuto dal server (sanificato come ogni lettura),
+ * senza ri-accodarlo verso il server. Emette 'ch:remote' se qualcosa
+ * è cambiato davvero.
+ */
+export function applyRemoteState(devices, commands) {
+  const devs = (Array.isArray(devices) ? devices : []).map(sanitizeDevice).filter(Boolean);
+  const cmds = (Array.isArray(commands) ? commands : []).map(sanitizeCommand).filter(Boolean);
+  const changed = JSON.stringify(devs) !== JSON.stringify(getDevices())
+    || JSON.stringify(cmds) !== JSON.stringify(getCommands());
+  if (!changed) return;
+  writeJson(K_DEVICES, devs);
+  listCache.set(K_DEVICES, devs);
+  writeJson(K_COMMANDS, cmds);
+  listCache.set(K_COMMANDS, cmds);
+  emit('ch:remote', {});
+}
+
+/** Applica il log di un device ricevuto dal server (fusione fatta dal server). */
+export function applyRemoteLog(deviceId, entries) {
+  if (!ID_RE.test(deviceId)) return;
+  const clean = (Array.isArray(entries) ? entries : []).filter(
+    (e) => e && typeof e === 'object' && Number.isFinite(e.ts) && typeof e.text === 'string',
+  );
+  logCache.set(deviceId, clean);
+  writeJson(K_LOG_PREFIX + deviceId, clean);
+  emit('ch:log', { deviceId });
 }
 
 function upsertItem(key, sanitize, item) {
@@ -235,7 +267,8 @@ export function saveDevice(device) {
 
 export function deleteDevice(id) {
   const ok = writeList(K_DEVICES, getDevices().filter((d) => d.id !== id));
-  // rimuove anche i comandi e il log associati
+  // rimuove anche i comandi e il log associati (il server elimina i propri
+  // log dei device rimossi quando riceve la PUT della lista dispositivi)
   writeList(K_COMMANDS, getCommands().filter((c) => c.deviceId !== id));
   logCache.delete(id);
   try { localStorage.removeItem(K_LOG_PREFIX + id); } catch { /* ignora */ }
@@ -283,14 +316,16 @@ function loadLog(deviceId) {
  */
 export function appendLog(deviceId, kind, text) {
   if (!ID_RE.test(deviceId)) return;
+  const entry = { ts: Date.now(), kind: String(kind), text: String(text).slice(0, 512) };
   const list = loadLog(deviceId);
-  list.push({ ts: Date.now(), kind: String(kind), text: String(text).slice(0, 512) });
+  list.push(entry);
   if (list.length > MAX_LOG_ENTRIES) list.splice(0, list.length - MAX_LOG_ENTRIES);
   if (!writeJson(K_LOG_PREFIX + deviceId, list)) {
     // quota esaurita: dimezza e riprova una volta
     list.splice(0, Math.floor(list.length / 2));
     writeJson(K_LOG_PREFIX + deviceId, list);
   }
+  queueLogAppend(deviceId, entry);
   emit('ch:log', { deviceId });
 }
 
@@ -304,6 +339,7 @@ export function clearLog(deviceId) {
   if (!ID_RE.test(deviceId)) return;
   logCache.set(deviceId, []);
   try { localStorage.removeItem(K_LOG_PREFIX + deviceId); } catch { /* ignora */ }
+  queueLogClear(deviceId);
   emit('ch:log', { deviceId });
 }
 

@@ -5,6 +5,7 @@
 import { cryptoBackendName, runSelfTest, usesWebCrypto } from './crypto.js';
 import * as store from './storage.js';
 import { syncLinks, getLink, linkState } from './connection.js';
+import { initSync } from './sync.js';
 import { el, clear, toast, showErrors, statusBadge, applyStatus, connDot, applyConn, fmtDateTime } from './ui.js';
 
 const view = document.getElementById('view');
@@ -540,6 +541,24 @@ document.addEventListener('ch:conn', (e) => {
   if (stat) stat.textContent = connStatValue();
 });
 
+// stato condiviso cambiato da un altro client (PC/smartphone)
+document.addEventListener('ch:remote', () => {
+  syncLinks(store.getDevices());
+  // niente re-render se l'utente sta compilando un form: lo vedrà alla
+  // prossima navigazione (i dati sotto sono comunque già aggiornati)
+  if (!document.querySelector('form.form')) route();
+});
+
+document.addEventListener('ch:sync', (e) => {
+  const dot = document.getElementById('sync-state');
+  if (!dot) return;
+  dot.textContent = e.detail.online ? '● dati condivisi' : '○ solo locale';
+  dot.className = e.detail.online ? 'sync-on' : 'sync-off';
+  dot.title = e.detail.online
+    ? 'Connesso al server: dispositivi, comandi e log sono in comune'
+    : 'Server non raggiungibile: modifiche salvate in locale, verranno sincronizzate';
+});
+
 // gli eventi di log arrivano a raffica (tx+rx+esito in <1 s): un solo repaint per frame
 let logRepaintQueued = false;
 document.addEventListener('ch:log', () => {
@@ -564,6 +583,13 @@ function init() {
   syncLinks(store.getDevices());
   window.addEventListener('hashchange', route);
   route();
+  initSync({
+    getDevices: store.getDevices,
+    getCommands: store.getCommands,
+    getLog: store.getLog,
+    applyState: store.applyRemoteState,
+    applyLog: store.applyRemoteLog,
+  });
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => { /* offline non critico */ });
   }

@@ -98,3 +98,7 @@ $RECYCLE.BIN/
 *.msi
 *.msm
 *.msp
+
+# dati condivisi del server Comfy home (config utente, contiene le chiavi)
+comfy-home-data.json
+comfy-home-data.json.bak

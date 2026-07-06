@@ -6,7 +6,7 @@
  * questo file.
  */
 
-const CACHE = 'comfy-home-v2';
+const CACHE = 'comfy-home-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -16,6 +16,7 @@ const ASSETS = [
   './js/crypto.js',
   './js/storage.js',
   './js/connection.js',
+  './js/sync.js',
   './manifest.webmanifest',
   './icons/icon.svg',
   './icons/icon-192.png',
@@ -37,6 +38,7 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  if (url.pathname.includes('/api/')) return; // la sincronizzazione non si cache-a mai
   e.respondWith(
     caches.match(e.request).then((hit) => {
       const refresh = fetch(e.request)

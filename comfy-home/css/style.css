@@ -96,11 +96,17 @@ h1 { font-size: 1.5rem; margin: .2rem 0; }
 h2 { font-size: 1.15rem; margin: 0 0 .6rem; }
 
 .footer {
-  text-align: center;
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  flex-wrap: wrap;
   color: var(--ink-soft);
   font-size: .85rem;
   padding: 1rem;
 }
+
+.sync-on { color: var(--ok); }
+.sync-off { color: var(--ink-soft); }
 
 /* ---------------- hero ---------------- */
 
