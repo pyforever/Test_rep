@@ -37,6 +37,17 @@ export function clear(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
 }
 
+/** Bus eventi dell'app: unico punto di emissione degli eventi "ch:*". */
+export function emit(name, detail) {
+  document.dispatchEvent(new CustomEvent(name, { detail }));
+}
+
+/** Mostra una lista di errori di validazione in un contenitore dedicato. */
+export function showErrors(box, errors) {
+  clear(box);
+  for (const msg of errors) box.append(el('p', {}, msg));
+}
+
 /* ------------------------------------------------------------------ */
 /* Toast                                                               */
 /* ------------------------------------------------------------------ */
@@ -89,11 +100,8 @@ export function applyStatus(node, status) {
 
 /** Pallino stato connessione WebSocket. */
 export function connDot(deviceId, connected) {
-  const d = el('span', {
-    class: `conn-dot ${connected ? 'conn-on' : 'conn-off'}`,
-    dataset: { devConn: deviceId },
-    title: connected ? 'Connesso' : 'Non connesso',
-  });
+  const d = el('span', { dataset: { devConn: deviceId } });
+  applyConn(d, connected);
   return d;
 }
 
@@ -102,9 +110,11 @@ export function applyConn(node, connected) {
   node.title = connected ? 'Connesso' : 'Non connesso';
 }
 
+// formattatori cachati: crearli per ogni riga di log costerebbe ~10x
+const DATE_FMT = new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+const TIME_FMT = new Intl.DateTimeFormat('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
 /** Formatta data e ora per il log (locale it). */
 export function fmtDateTime(ts) {
-  const d = new Date(ts);
-  return d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' })
-    + ' ' + d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return `${DATE_FMT.format(ts)} ${TIME_FMT.format(ts)}`;
 }

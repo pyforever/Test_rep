@@ -1,6 +1,12 @@
-/* Comfy home — service worker (app shell offline, cache-first) */
+/* Comfy home — service worker.
+ *
+ * Strategia stale-while-revalidate: risponde subito dalla cache (offline e
+ * velocità) ma aggiorna la cache dalla rete a ogni richiesta, così un deploy
+ * nuovo viene raccolto al caricamento successivo senza dover modificare
+ * questo file.
+ */
 
-const CACHE = 'comfy-home-v1';
+const CACHE = 'comfy-home-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -32,13 +38,21 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
   e.respondWith(
-    caches.match(e.request).then((hit) => hit
-      || fetch(e.request).then((res) => {
-        if (res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(e.request, copy));
-        }
-        return res;
-      })),
+    caches.match(e.request).then((hit) => {
+      const refresh = fetch(e.request)
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(e.request, copy));
+          }
+          return res;
+        })
+        .catch(() => hit); // offline: resta valida la copia in cache
+      if (hit) {
+        e.waitUntil(refresh.catch(() => {})); // aggiorna in background
+        return hit;
+      }
+      return refresh;
+    }),
   );
 });

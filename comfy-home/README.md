@@ -18,7 +18,10 @@ da remoto) e resta **in ascolto continuo** delle loro trasmissioni.
   - conferma coincidente → **✓ verde** accanto al nome del device;
   - conferma diversa o **timeout** → **✗ rossa**.
 - **Ascolto continuo**: la connessione WebSocket resta aperta; ogni trasmissione
-  spontanea del device viene decifrata e registrata.
+  spontanea del device viene decifrata e registrata. Solo i messaggi che iniziano
+  con `[nome_device]_` sono trattati come conferme: la telemetria spontanea che
+  arriva durante l'attesa non altera l'esito del comando (quindi le trasmissioni
+  spontanee del firmware **non** devono usare quel prefisso).
 - **Log per device**: data e ora di tutte le stringhe inviate e ricevute, in qualunque momento.
 - **PWA**: installabile, con cache offline dell'interfaccia.
 
@@ -76,11 +79,15 @@ Esporre le porte degli ESP direttamente su Internet è sconsigliato.
 - **Input**: nome device, host/IP, porta, chiave, timeout e parametri sono validati
   sia nel form sia in rilettura dallo storage (difesa da storage corrotto).
   I caratteri di protocollo `|` e `$` sono vietati nei parametri, `_` nel nome device.
+  Nomi e coppie indirizzo:porta duplicati vengono rifiutati (renderebbero ambigue
+  le conferme).
 - **Limiti noti** (da valutare rispetto al proprio modello di minaccia):
   - le chiavi sono salvate in `localStorage` del profilo browser: chi ha accesso
     fisico e sbloccato al dispositivo può leggerle;
-  - GCM non previene il **replay** di un messaggio catturato: se rilevante, includere
-    un contatore/timestamp nei parametri del comando e verificarlo sull'ESP;
+  - GCM non previene il **replay** di un messaggio catturato, e una conferma arrivata
+    in ritardo (dopo il timeout) potrebbe combaciare con un re-invio successivo dello
+    stesso comando: se rilevante per il proprio modello di minaccia, includere un
+    contatore/timestamp nei parametri del comando e verificarlo sull'ESP;
   - una web app non può restare in ascolto **ad app chiusa** (limite della piattaforma):
     l'ascolto è attivo finché l'app è aperta, anche in background recente.
 

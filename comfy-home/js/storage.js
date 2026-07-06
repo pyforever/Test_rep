@@ -5,7 +5,13 @@
  * (difesa da localStorage manomesso o corrotto). Le icone sono ri-codificate
  * via canvas in PNG/JPEG data-URL: qualunque contenuto attivo (es. SVG con
  * script) viene eliminato dalla rasterizzazione.
+ *
+ * Le liste e i log sono memoizzati in RAM: localStorage viene ri-letto solo
+ * alla prima richiesta, le scritture aggiornano cache e storage insieme.
  */
+
+import { bytesToHex, randomBytes } from './crypto.js';
+import { emit } from './ui.js';
 
 const K_DEVICES = 'ch_devices_v1';
 const K_COMMANDS = 'ch_commands_v1';
@@ -13,6 +19,7 @@ const K_LOG_PREFIX = 'ch_log_v1_';
 
 const MAX_LOG_ENTRIES = 300;
 const MAX_ICON_DATAURL = 60 * 1024; // ~60 KB per icona
+export const MAX_PARAMS = 16;
 const ID_RE = /^[a-f0-9]{16}$/;
 
 /* ------------------------------------------------------------------ */
@@ -20,9 +27,7 @@ const ID_RE = /^[a-f0-9]{16}$/;
 /* ------------------------------------------------------------------ */
 
 export function newId() {
-  const b = new Uint8Array(8);
-  crypto.getRandomValues(b);
-  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  return bytesToHex(randomBytes(8));
 }
 
 function readJson(key, fallback) {
@@ -66,20 +71,25 @@ const HOSTNAME_RE = /^[A-Za-z0-9]([A-Za-z0-9\-]{0,62})?(\.[A-Za-z0-9]([A-Za-z0-9
 // caratteri del protocollo ("|" separatore, "$" terminatore) e i controlli.
 const PARAM_RE = /^[A-Za-z0-9À-ÖØ-öø-ÿ .,;:+\-*/=_@#%&()!?]{1,64}$/;
 
-export function isValidIPv4(s) {
+function isValidIPv4(s) {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
   if (!m) return false;
   return m.slice(1).every((o) => Number(o) <= 255 && (o.length === 1 || o[0] !== '0'));
 }
 
-export function isValidHost(s) {
+function isValidHost(s) {
   if (typeof s !== 'string' || s.length === 0 || s.length > 253) return false;
   // una stringa di sole cifre e punti è un tentativo di IPv4: dev'essere valido
   if (/^[\d.]+$/.test(s)) return isValidIPv4(s);
   return HOSTNAME_RE.test(s);
 }
 
-export function validateDeviceInput({ name, host, port, key, timeout }) {
+/**
+ * Valida i dati di un device. Se `others` è fornito (lista degli altri
+ * device configurati), rifiuta anche nomi e indirizzi duplicati: nomi uguali
+ * renderebbero ambigue le conferme "[nome]_[stringa]".
+ */
+export function validateDeviceInput({ name, host, port, key, timeout }, others = null) {
   const errors = [];
   if (typeof name !== 'string' || !NAME_RE.test(name.trim())) {
     errors.push('Nome: 1–32 caratteri (lettere, numeri, spazi, punto, trattino). Vietati "_", "|", "$".');
@@ -98,6 +108,15 @@ export function validateDeviceInput({ name, host, port, key, timeout }) {
   if (!Number.isFinite(t) || t < 1 || t > 120) {
     errors.push('Timeout: da 1 a 120 secondi.');
   }
+  if (Array.isArray(others)) {
+    const n = String(name || '').trim().toLowerCase();
+    if (others.some((d) => d.name.toLowerCase() === n)) {
+      errors.push('Nome già usato da un altro dispositivo.');
+    }
+    if (others.some((d) => d.host === String(host || '').trim() && d.port === p)) {
+      errors.push('Indirizzo e porta già usati da un altro dispositivo.');
+    }
+  }
   return errors;
 }
 
@@ -105,6 +124,26 @@ export function validateParam(value) {
   if (typeof value !== 'string') return false;
   const v = value.trim();
   return v.length > 0 && PARAM_RE.test(v) && !v.includes('|') && !v.includes('$');
+}
+
+/** Valida i dati di un comando; ritorna la lista (vuota se ok) degli errori. */
+export function validateCommandInput({ deviceId, label, params }) {
+  const errors = [];
+  if (!ID_RE.test(String(deviceId || ''))) {
+    errors.push('Selezionare un dispositivo valido.');
+  }
+  const l = String(label || '').trim();
+  if (!l || l.length > 40) errors.push('Descrizione: da 1 a 40 caratteri.');
+  if (!Array.isArray(params) || params.length < 1) {
+    errors.push('Inserire almeno un parametro.');
+  } else {
+    if (params.length > MAX_PARAMS) errors.push(`Massimo ${MAX_PARAMS} parametri.`);
+    const bad = params.filter((p) => !validateParam(p));
+    if (bad.length) {
+      errors.push(`Parametri non validi (vietati "|", "$" e caratteri di controllo): ${bad.join(', ')}`);
+    }
+  }
+  return errors;
 }
 
 function sanitizeDevice(d) {
@@ -131,10 +170,8 @@ function sanitizeCommand(c) {
     params: Array.isArray(c.params) ? c.params.map((p) => String(p).trim()) : [],
     icon: typeof c.icon === 'string' ? c.icon : '',
   };
-  if (!ID_RE.test(cmd.id) || !ID_RE.test(cmd.deviceId)) return null;
-  if (!cmd.label || cmd.label.length > 40) return null;
-  if (cmd.params.length < 1 || cmd.params.length > 16) return null;
-  if (!cmd.params.every(validateParam)) return null;
+  if (!ID_RE.test(cmd.id)) return null;
+  if (validateCommandInput(cmd).length > 0) return null;
   if (cmd.icon && !isSafeIcon(cmd.icon)) cmd.icon = '';
   return cmd;
 }
@@ -145,12 +182,47 @@ export function buildCommandString(params) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Liste memoizzate (device e comandi)                                 */
+/* ------------------------------------------------------------------ */
+
+const listCache = new Map(); // chiave storage -> array sanificato
+
+function readList(key, sanitize) {
+  let list = listCache.get(key);
+  if (!list) {
+    const raw = readJson(key, []);
+    const input = Array.isArray(raw) ? raw : [];
+    list = input.map(sanitize).filter(Boolean);
+    if (list.length < input.length) {
+      console.warn(`${key}: ${input.length - list.length} voci non valide ignorate.`);
+    }
+    listCache.set(key, list);
+  }
+  return [...list]; // copia: la cache non è mutabile dall'esterno
+}
+
+function writeList(key, list) {
+  if (!writeJson(key, list)) return false;
+  listCache.set(key, list);
+  return true;
+}
+
+function upsertItem(key, sanitize, item) {
+  const clean = sanitize(item);
+  if (!clean) return false;
+  const list = readList(key, sanitize);
+  const i = list.findIndex((x) => x.id === clean.id);
+  if (i >= 0) list[i] = clean;
+  else list.push(clean);
+  return writeList(key, list);
+}
+
+/* ------------------------------------------------------------------ */
 /* Device                                                              */
 /* ------------------------------------------------------------------ */
 
 export function getDevices() {
-  const list = readJson(K_DEVICES, []);
-  return Array.isArray(list) ? list.map(sanitizeDevice).filter(Boolean) : [];
+  return readList(K_DEVICES, sanitizeDevice);
 }
 
 export function getDevice(id) {
@@ -158,21 +230,14 @@ export function getDevice(id) {
 }
 
 export function saveDevice(device) {
-  const clean = sanitizeDevice(device);
-  if (!clean) return false;
-  const list = getDevices();
-  const i = list.findIndex((d) => d.id === clean.id);
-  if (i >= 0) list[i] = clean;
-  else list.push(clean);
-  return writeJson(K_DEVICES, list);
+  return upsertItem(K_DEVICES, sanitizeDevice, device);
 }
 
 export function deleteDevice(id) {
-  const list = getDevices().filter((d) => d.id !== id);
-  const ok = writeJson(K_DEVICES, list);
+  const ok = writeList(K_DEVICES, getDevices().filter((d) => d.id !== id));
   // rimuove anche i comandi e il log associati
-  const cmds = getCommands().filter((c) => c.deviceId !== id);
-  writeJson(K_COMMANDS, cmds);
+  writeList(K_COMMANDS, getCommands().filter((c) => c.deviceId !== id));
+  logCache.delete(id);
   try { localStorage.removeItem(K_LOG_PREFIX + id); } catch { /* ignora */ }
   return ok;
 }
@@ -182,27 +247,34 @@ export function deleteDevice(id) {
 /* ------------------------------------------------------------------ */
 
 export function getCommands() {
-  const list = readJson(K_COMMANDS, []);
-  return Array.isArray(list) ? list.map(sanitizeCommand).filter(Boolean) : [];
+  return readList(K_COMMANDS, sanitizeCommand);
 }
 
 export function saveCommand(command) {
-  const clean = sanitizeCommand(command);
-  if (!clean) return false;
-  const list = getCommands();
-  const i = list.findIndex((c) => c.id === clean.id);
-  if (i >= 0) list[i] = clean;
-  else list.push(clean);
-  return writeJson(K_COMMANDS, list);
+  return upsertItem(K_COMMANDS, sanitizeCommand, command);
 }
 
 export function deleteCommand(id) {
-  return writeJson(K_COMMANDS, getCommands().filter((c) => c.id !== id));
+  return writeList(K_COMMANDS, getCommands().filter((c) => c.id !== id));
 }
 
 /* ------------------------------------------------------------------ */
 /* Log per device                                                      */
 /* ------------------------------------------------------------------ */
+
+const logCache = new Map(); // deviceId -> array di voci
+
+function loadLog(deviceId) {
+  let list = logCache.get(deviceId);
+  if (!list) {
+    const raw = readJson(K_LOG_PREFIX + deviceId, []);
+    list = (Array.isArray(raw) ? raw : []).filter(
+      (e) => e && typeof e === 'object' && Number.isFinite(e.ts) && typeof e.text === 'string',
+    );
+    logCache.set(deviceId, list);
+  }
+  return list;
+}
 
 /**
  * @param {string} deviceId
@@ -211,30 +283,28 @@ export function deleteCommand(id) {
  */
 export function appendLog(deviceId, kind, text) {
   if (!ID_RE.test(deviceId)) return;
-  const key = K_LOG_PREFIX + deviceId;
-  const log = readJson(key, []);
-  const list = Array.isArray(log) ? log : [];
+  const list = loadLog(deviceId);
   list.push({ ts: Date.now(), kind: String(kind), text: String(text).slice(0, 512) });
   if (list.length > MAX_LOG_ENTRIES) list.splice(0, list.length - MAX_LOG_ENTRIES);
-  if (!writeJson(key, list)) {
+  if (!writeJson(K_LOG_PREFIX + deviceId, list)) {
     // quota esaurita: dimezza e riprova una volta
     list.splice(0, Math.floor(list.length / 2));
-    writeJson(key, list);
+    writeJson(K_LOG_PREFIX + deviceId, list);
   }
-  document.dispatchEvent(new CustomEvent('ch:log', { detail: { deviceId } }));
+  emit('ch:log', { deviceId });
 }
 
+/** Ritorna le voci di log (array condiviso: non modificarlo, usare slice()). */
 export function getLog(deviceId) {
   if (!ID_RE.test(deviceId)) return [];
-  const log = readJson(K_LOG_PREFIX + deviceId, []);
-  if (!Array.isArray(log)) return [];
-  return log.filter((e) => e && typeof e === 'object' && Number.isFinite(e.ts) && typeof e.text === 'string');
+  return loadLog(deviceId);
 }
 
 export function clearLog(deviceId) {
   if (!ID_RE.test(deviceId)) return;
+  logCache.set(deviceId, []);
   try { localStorage.removeItem(K_LOG_PREFIX + deviceId); } catch { /* ignora */ }
-  document.dispatchEvent(new CustomEvent('ch:log', { detail: { deviceId } }));
+  emit('ch:log', { deviceId });
 }
 
 /* ------------------------------------------------------------------ */
@@ -278,7 +348,7 @@ export function fileToIcon(file) {
           return;
         }
         resolve(out);
-      } catch (e) {
+      } catch {
         reject(new Error('Impossibile elaborare l\'immagine.'));
       }
     };

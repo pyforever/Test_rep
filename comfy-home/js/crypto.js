@@ -18,21 +18,21 @@
 const te = new TextEncoder();
 const td = new TextDecoder();
 
-export const IV_LEN = 12;
-export const TAG_LEN = 16;
-const MAX_PAYLOAD_B64 = 8192; // limite anti-abuso sui messaggi in ingresso
+const IV_LEN = 12;
+const TAG_LEN = 16;
+export const MAX_PAYLOAD_B64 = 8192; // limite anti-abuso sui messaggi in ingresso
 
 /* ------------------------------------------------------------------ */
 /* Utilità byte/base64                                                 */
 /* ------------------------------------------------------------------ */
 
-export function bytesToB64(bytes) {
+function bytesToB64(bytes) {
   let bin = '';
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
   return btoa(bin);
 }
 
-export function b64ToBytes(b64) {
+function b64ToBytes(b64) {
   if (typeof b64 !== 'string' || b64.length === 0 || b64.length > MAX_PAYLOAD_B64) {
     throw new Error('payload non valido');
   }
@@ -45,7 +45,7 @@ export function b64ToBytes(b64) {
   return out;
 }
 
-function bytesToHex(bytes) {
+export function bytesToHex(bytes) {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
@@ -55,7 +55,7 @@ function hexToBytes(hex) {
   return out;
 }
 
-function randomBytes(n) {
+export function randomBytes(n) {
   const out = new Uint8Array(n);
   // crypto.getRandomValues è disponibile anche in contesti non sicuri.
   (globalThis.crypto || {}).getRandomValues
@@ -379,6 +379,11 @@ const subtle = globalThis.crypto && globalThis.crypto.subtle ? globalThis.crypto
 
 export function cryptoBackendName() {
   return subtle ? 'WebCrypto (AES-256-GCM)' : 'JS integrato (AES-256-GCM, auto-testato NIST)';
+}
+
+/** True se è attivo il backend WebCrypto (contesto sicuro). */
+export function usesWebCrypto() {
+  return subtle !== null;
 }
 
 async function deriveKeyBytes(passphrase) {

@@ -2,10 +2,10 @@
  * Comfy home — applicazione principale (router + viste).
  */
 
-import { cryptoBackendName, runSelfTest } from './crypto.js';
+import { cryptoBackendName, runSelfTest, usesWebCrypto } from './crypto.js';
 import * as store from './storage.js';
 import { syncLinks, getLink, linkState } from './connection.js';
-import { el, clear, toast, statusBadge, applyStatus, connDot, applyConn, fmtDateTime } from './ui.js';
+import { el, clear, toast, showErrors, statusBadge, applyStatus, connDot, applyConn, fmtDateTime } from './ui.js';
 
 const view = document.getElementById('view');
 
@@ -78,7 +78,6 @@ function route() {
 function renderHome() {
   const devices = store.getDevices();
   const commands = store.getCommands();
-  const connected = devices.filter((d) => linkState(d.id).connected).length;
 
   const hero = el('section', { class: 'hero' });
   hero.innerHTML = HERO_SVG; // markup statico costante
@@ -91,7 +90,7 @@ function renderHome() {
   const stats = el('section', { class: 'cards' },
     statCard(String(devices.length), 'Dispositivi configurati', '#/devices'),
     statCard(String(commands.length), 'Comandi salvati', '#/commands'),
-    statCard(`${connected}/${devices.length}`, 'Dispositivi connessi', '#/devices'),
+    statCard(connStatValue(), 'Dispositivi connessi', '#/devices', { connStat: '1' }),
   );
 
   const info = el('section', { class: 'panel soft' },
@@ -103,10 +102,16 @@ function renderHome() {
   view.append(hero, stats, info);
 }
 
-function statCard(value, label, href) {
+function statCard(value, label, href, dataset = null) {
   return el('a', { class: 'card stat', href },
-    el('span', { class: 'stat-value' }, value),
+    el('span', { class: 'stat-value', dataset: dataset || {} }, value),
     el('span', { class: 'stat-label' }, label));
+}
+
+function connStatValue() {
+  const devices = store.getDevices();
+  const connected = devices.filter((d) => linkState(d.id).connected).length;
+  return `${connected}/${devices.length}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -196,12 +201,10 @@ function openDeviceForm(device) {
         key: fKey.input.value,
         timeout: Number(fTimeout.input.value),
       };
-      const errors = store.validateDeviceInput(data);
-      clear(errBox);
-      if (errors.length) {
-        errors.forEach((msg) => errBox.append(el('p', {}, msg)));
-        return;
-      }
+      const others = store.getDevices().filter((x) => x.id !== data.id);
+      const errors = store.validateDeviceInput(data, others);
+      showErrors(errBox, errors);
+      if (errors.length) return;
       if (!store.saveDevice(data)) {
         toast('Salvataggio non riuscito (spazio esaurito?).', 'error');
         return;
@@ -254,19 +257,18 @@ function paintCommandList() {
   }
   for (const c of commands) {
     const dev = devices.get(c.deviceId);
-    const st = dev ? linkState(dev.id) : { connected: false, status: 'idle' };
+    const st = linkState(c.deviceId);
     const commandString = store.buildCommandString(c.params);
 
     const sendBtn = el('button', {
       class: 'btn primary send',
       dataset: dev ? { sendDev: dev.id } : {},
       disabled: !dev || st.status === 'pending',
-      onclick: async () => {
-        if (!dev) return;
-        const link = getLink(dev.id);
-        if (!link) return;
-        setSendDisabled(dev.id, true);
-        await link.sendCommand(commandString);
+      onclick: () => {
+        // lo stato del bottone è gestito dal listener 'ch:status':
+        // sendCommand emette 'pending' in modo sincrono
+        const link = dev ? getLink(dev.id) : null;
+        if (link) link.sendCommand(commandString);
       },
     }, 'Send');
 
@@ -321,7 +323,10 @@ function openCommandForm(command) {
 
   const errBox = el('div', { class: 'errors' });
 
+  const orphan = !devices.some((d) => d.id === c.deviceId);
   const select = el('select', { class: 'input' },
+    // comando orfano (device eliminato): nessuna riassegnazione silenziosa
+    orphan ? el('option', { value: '', selected: true, disabled: true }, '— seleziona dispositivo —') : null,
     ...devices.map((d) => el('option', { value: d.id, selected: d.id === c.deviceId }, d.name)));
   const selWrap = el('label', { class: 'field' }, el('span', {}, 'Dispositivo target'), select);
 
@@ -353,12 +358,16 @@ function openCommandForm(command) {
   const paramsBox = el('div', { class: 'params' });
   const previewStr = el('code', { class: 'cmd-string preview-str' });
 
-  function refreshPreview() {
-    const params = paramInputs().map((i) => i.value.trim()).filter((v) => v.length > 0);
-    previewStr.textContent = params.length ? store.buildCommandString(params) : '—';
-  }
   function paramInputs() {
     return Array.from(paramsBox.querySelectorAll('input'));
+  }
+  // unica definizione di "parametri effettivi": la stessa per anteprima e salvataggio
+  function collectParams() {
+    return paramInputs().map((i) => i.value.trim()).filter((v) => v.length > 0);
+  }
+  function refreshPreview() {
+    const params = collectParams();
+    previewStr.textContent = params.length ? store.buildCommandString(params) : '—';
   }
   function addParamField(value = '') {
     const input = el('input', {
@@ -383,7 +392,10 @@ function openCommandForm(command) {
   const addBtn = el('button', {
     class: 'btn', type: 'button',
     onclick: () => {
-      if (paramsBox.children.length >= 16) { toast('Massimo 16 parametri.', 'error'); return; }
+      if (paramsBox.children.length >= store.MAX_PARAMS) {
+        toast(`Massimo ${store.MAX_PARAMS} parametri.`, 'error');
+        return;
+      }
       addParamField().focus();
     },
   }, '+ Inserisci parametro');
@@ -393,25 +405,17 @@ function openCommandForm(command) {
     novalidate: true,
     onsubmit: (e) => {
       e.preventDefault();
-      const params = paramInputs().map((i) => i.value.trim()).filter((v) => v.length > 0);
-      clear(errBox);
-      const errors = [];
-      const label = fLabel.input.value.trim();
-      if (!label || label.length > 40) errors.push('Descrizione: da 1 a 40 caratteri.');
-      if (params.length === 0) errors.push('Inserire almeno un parametro.');
-      const bad = params.filter((p) => !store.validateParam(p));
-      if (bad.length) errors.push(`Parametri non validi (vietati "|", "$" e caratteri di controllo): ${bad.join(', ')}`);
-      if (errors.length) {
-        errors.forEach((m) => errBox.append(el('p', {}, m)));
-        return;
-      }
       const data = {
         id: isNew ? store.newId() : c.id,
         deviceId: select.value,
-        label,
-        params,
+        label: fLabel.input.value.trim(),
+        params: collectParams(),
         icon,
       };
+      // stesse regole applicate da saveCommand: nessuna deriva tra form e storage
+      const errors = store.validateCommandInput(data);
+      showErrors(errBox, errors);
+      if (errors.length) return;
       if (!store.saveCommand(data)) {
         toast('Salvataggio non riuscito.', 'error');
         return;
@@ -524,18 +528,28 @@ document.addEventListener('ch:status', (e) => {
   const { deviceId, status } = e.detail;
   document.querySelectorAll(`[data-dev-status="${CSS.escape(deviceId)}"]`)
     .forEach((n) => applyStatus(n, status));
-  if (status !== 'pending') setSendDisabled(deviceId, false);
+  // unico punto che governa l'abilitazione dei bottoni Send
+  setSendDisabled(deviceId, status === 'pending');
 });
 
 document.addEventListener('ch:conn', (e) => {
   const { deviceId, connected } = e.detail;
   document.querySelectorAll(`[data-dev-conn="${CSS.escape(deviceId)}"]`)
     .forEach((n) => applyConn(n, connected));
+  const stat = document.querySelector('[data-conn-stat]');
+  if (stat) stat.textContent = connStatValue();
 });
 
-document.addEventListener('ch:log', (e) => {
-  const m = /^#\/log\/(.+)$/.exec(location.hash);
-  if (m && m[1] === e.detail.deviceId) paintLogTable(e.detail.deviceId);
+// gli eventi di log arrivano a raffica (tx+rx+esito in <1 s): un solo repaint per frame
+let logRepaintQueued = false;
+document.addEventListener('ch:log', () => {
+  if (logRepaintQueued) return;
+  logRepaintQueued = true;
+  requestAnimationFrame(() => {
+    logRepaintQueued = false;
+    const m = /^#\/log\/(.+)$/.exec(location.hash);
+    if (m) paintLogTable(m[1]);
+  });
 });
 
 /* ------------------------------------------------------------------ */
@@ -543,7 +557,8 @@ document.addEventListener('ch:log', (e) => {
 /* ------------------------------------------------------------------ */
 
 function init() {
-  if (!runSelfTest()) {
+  // l'auto-test riguarda solo il backend JS: con WebCrypto attivo non blocca nulla
+  if (!usesWebCrypto() && !runSelfTest()) {
     toast('Attenzione: auto-test crittografico fallito. Invio disabilitato.', 'error');
   }
   syncLinks(store.getDevices());
