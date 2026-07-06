@@ -74,6 +74,23 @@ html, body {
 .nav a:hover { background: var(--panel-soft); }
 .nav a.active { background: var(--accent); color: var(--accent-ink); }
 
+.fs-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.fs-btn:hover { background: var(--panel-soft); color: var(--accent); }
+.fs-btn svg { width: 22px; height: 22px; }
+
 /* ---------------- layout ---------------- */
 
 main {
@@ -372,4 +389,8 @@ input:focus, select:focus, .btn:focus-visible, .nav a:focus-visible {
   .hero svg { height: 200px; }
   .hero-text h1 { font-size: 1.6rem; }
   .row-actions { width: 100%; justify-content: flex-end; }
+  /* barra su due righe: logo + fullscreen sopra, navigazione sotto */
+  .brand { order: 1; }
+  .fs-btn { order: 2; margin-left: auto; }
+  .nav { order: 3; flex-basis: 100%; }
 }

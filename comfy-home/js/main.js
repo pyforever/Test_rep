@@ -575,7 +575,33 @@ document.addEventListener('ch:log', () => {
 /* Avvio                                                               */
 /* ------------------------------------------------------------------ */
 
+/* Bottone schermo intero (equivalente di F11). I browser richiedono un
+ * gesto dell'utente per entrare in fullscreen: non è attivabile all'avvio. */
+function initFullscreen() {
+  const btn = document.getElementById('fs-btn');
+  const root = document.documentElement;
+  const request = root.requestFullscreen || root.webkitRequestFullscreen;
+  if (!btn || !request) return; // API non disponibile: il bottone resta nascosto
+  btn.hidden = false;
+  const isFs = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+  btn.addEventListener('click', () => {
+    if (isFs()) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    } else {
+      request.call(root).catch(() => toast('Schermo intero non consentito dal browser.', 'error'));
+    }
+  });
+  const refresh = () => {
+    const label = isFs() ? 'Esci da schermo intero' : 'Schermo intero';
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+  };
+  document.addEventListener('fullscreenchange', refresh);
+  document.addEventListener('webkitfullscreenchange', refresh);
+}
+
 function init() {
+  initFullscreen();
   // l'auto-test riguarda solo il backend JS: con WebCrypto attivo non blocca nulla
   if (!usesWebCrypto() && !runSelfTest()) {
     toast('Attenzione: auto-test crittografico fallito. Invio disabilitato.', 'error');
