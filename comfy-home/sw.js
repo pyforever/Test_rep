@@ -6,7 +6,7 @@
  * questo file.
  */
 
-const CACHE = 'comfy-home-v7';
+const CACHE = 'comfy-home-v8';
 const ASSETS = [
   './',
   './index.html',

@@ -8,6 +8,9 @@ import { syncLinks, getLink, linkState } from './connection.js';
 import { initSync } from './sync.js';
 import { el, clear, toast, showErrors, statusBadge, applyStatus, connDot, applyConn, fmtDateTime } from './ui.js';
 
+// tenere allineata alla costante CACHE in sw.js (visibile nel piè di pagina)
+const APP_VERSION = 'v8';
+
 const view = document.getElementById('view');
 
 /* ------------------------------------------------------------------ */
@@ -635,9 +638,32 @@ function init() {
     applyState: store.applyRemoteState,
     applyLog: store.applyRemoteLog,
   });
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => { /* offline non critico */ });
-  }
+  const ver = document.getElementById('app-version');
+  if (ver) ver.textContent = APP_VERSION;
+  initServiceWorker();
+}
+
+/* Registrazione service worker con aggiornamento automatico: quando una
+ * nuova versione si attiva, la pagina si ricarica da sola (una volta per
+ * deploy), così nessun client resta indietro senza saperlo. */
+function initServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('./sw.js').then((reg) => {
+    reg.addEventListener('updatefound', () => {
+      const worker = reg.installing;
+      if (!worker) return;
+      worker.addEventListener('statechange', () => {
+        // solo su aggiornamento (controller già presente), mai al primo install
+        if (worker.state === 'activated' && navigator.serviceWorker.controller) {
+          location.reload();
+        }
+      });
+    });
+    // l'app installata può restare aperta a lungo: ricontrolla al rientro
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reg.update().catch(() => {});
+    });
+  }).catch(() => { /* offline non critico */ });
 }
 
 init();
