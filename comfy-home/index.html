@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Comfy home — controlla i tuoi dispositivi ESP8266 ed ESP32 con comandi cifrati.">
+  <meta name="theme-color" content="#f2b98c">
+  <title>Comfy home</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3.5 3.5 11h2v8.5h5.5v-5h2v5h5.5V11h2Z" fill="currentColor"/>
+      </svg>
+      <span>Comfy home</span>
+    </a>
+    <nav class="nav" aria-label="Navigazione principale">
+      <a href="#/">Home</a>
+      <a href="#/devices">Dispositivi</a>
+      <a href="#/commands">Comandi</a>
+      <a href="#/log">Log</a>
+    </nav>
+  </header>
+
+  <main id="view" tabindex="-1" aria-live="polite"></main>
+
+  <footer class="footer">
+    <span>Comfy home · comandi cifrati per ESP8266 / ESP32</span>
+  </footer>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
