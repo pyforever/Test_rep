@@ -568,6 +568,7 @@ document.addEventListener('ch:log', () => {
     logRepaintQueued = false;
     const m = /^#\/log\/(.+)$/.exec(location.hash);
     if (m) paintLogTable(m[1]);
+    else if (/^#\/log\/?$/.test(location.hash)) route(); // aggiorna i contatori dell'indice
   });
 });
 

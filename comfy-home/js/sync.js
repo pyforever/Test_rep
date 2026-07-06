@@ -175,14 +175,22 @@ async function poll() {
       lastStateRev = state.rev;
       hooks.applyState(state.devices, state.commands);
     }
-    // il log viene scaricato solo per la pagina attualmente aperta
+    // i log si scaricano solo quando servono alla vista corrente:
+    // dettaglio aperto -> quel log; pagina indice -> i log cambiati
+    // (per i contatori "[n] voci di log")
     const logId = watchedLogId();
+    const toFetch = [];
     if (logId !== null) {
-      const serverRev = (state.logRevs || {})[logId] || 0;
-      if (serverRev !== (lastLogRevs[logId] || -1)) {
-        const log = await api(`log/${logId}`);
-        lastLogRevs[logId] = log.rev;
-        hooks.applyLog(logId, log.entries);
+      toFetch.push(logId);
+    } else if (/^#\/log\/?$/.test(location.hash)) {
+      toFetch.push(...Object.keys(state.logRevs || {}));
+    }
+    for (const id of toFetch) {
+      const serverRev = (state.logRevs || {})[id] || 0;
+      if (serverRev !== (lastLogRevs[id] || -1)) {
+        const log = await api(`log/${id}`);
+        lastLogRevs[id] = log.rev;
+        hooks.applyLog(id, log.entries);
       }
     }
   } catch {
