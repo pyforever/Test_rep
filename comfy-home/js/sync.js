@@ -104,7 +104,11 @@ async function api(path, method = 'GET', body = undefined) {
     body: body !== undefined ? JSON.stringify(body) : undefined,
     cache: 'no-store',
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(`HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
@@ -125,20 +129,31 @@ async function flushOutbox() {
     const box = loadOutbox();
     if (box.length === 0) return;
     const op = box[0];
-    let res;
-    if (op.op === 'put') {
-      const list = op.kind === 'devices' ? hooks.getDevices() : hooks.getCommands();
-      res = await api(op.kind, 'PUT', list);
-      lastStateRev = res.rev; // eco della propria scrittura: niente ri-fetch
-    } else if (op.op === 'logadd') {
-      res = await api(`log/${op.id}`, 'POST', op.entry);
-      lastLogRevs[op.id] = res.rev;
-    } else if (op.op === 'logclear') {
-      res = await api(`log/${op.id}`, 'DELETE');
-      lastLogRevs[op.id] = res.rev;
-    } else if (op.op === 'logput') {
-      res = await api(`log/${op.id}`, 'PUT', op.entries);
-      lastLogRevs[op.id] = res.rev;
+    try {
+      let res;
+      if (op.op === 'put') {
+        const list = op.kind === 'devices' ? hooks.getDevices() : hooks.getCommands();
+        res = await api(op.kind, 'PUT', list);
+        lastStateRev = res.rev; // eco della propria scrittura: niente ri-fetch
+      } else if (op.op === 'logadd') {
+        res = await api(`log/${op.id}`, 'POST', op.entry);
+        lastLogRevs[op.id] = res.rev;
+      } else if (op.op === 'logclear') {
+        res = await api(`log/${op.id}`, 'DELETE');
+        lastLogRevs[op.id] = res.rev;
+      } else if (op.op === 'logput') {
+        res = await api(`log/${op.id}`, 'PUT', op.entries);
+        lastLogRevs[op.id] = res.rev;
+      }
+    } catch (e) {
+      // un rifiuto definitivo (4xx) non guarirà mai da solo: scartare
+      // l'operazione, altrimenti resta in testa e blocca l'intera coda
+      if (e && e.status >= 400 && e.status < 500) {
+        console.warn('Sync: operazione rifiutata dal server, scartata.', op.op, e.status);
+        removeFromOutbox(op.q);
+        continue;
+      }
+      throw e; // errore di rete/5xx: si riprova al prossimo ciclo
     }
     removeFromOutbox(op.q);
   }
