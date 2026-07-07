@@ -156,5 +156,5 @@ comfy-home/
 └── icons/                icone app
 ```
 
-Il firmware per gli ESP (ricezione, decifratura, conferma) è previsto come fase
-successiva del progetto.
+Il firmware per gli ESP (ricezione, decifratura, conferma, telemetria) è nella
+cartella `esp/` del repository: vedere `esp/README.md`.
